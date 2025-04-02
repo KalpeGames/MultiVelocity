@@ -93,7 +93,7 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
       }
       ConnectedPlayer player = serverConn.getPlayer();
       ByteBuf forwardingData = PlayerDataForwarding.createForwardingData(
-          configuration.getForwardingSecret(),
+          configuration.getForwardingSecret(this.serverConn.registeredServer.getServerInfo().getName()),
           serverConn.getPlayerRemoteAddressAsString(),
           player.getProtocolVersion(),
           player.getGameProfile(),

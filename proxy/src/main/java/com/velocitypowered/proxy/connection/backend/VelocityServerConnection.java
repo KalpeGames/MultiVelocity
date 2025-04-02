@@ -61,7 +61,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class VelocityServerConnection implements MinecraftConnectionAssociation, ServerConnection {
 
-  private final VelocityRegisteredServer registeredServer;
+  public final VelocityRegisteredServer registeredServer;
   private final @Nullable VelocityRegisteredServer previousServer;
   private final ConnectedPlayer proxyPlayer;
   private final VelocityServer server;
@@ -174,7 +174,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
     if (forwardingMode == PlayerInfoForwarding.LEGACY) {
       handshake.setServerAddress(createLegacyForwardingAddress());
     } else if (forwardingMode == PlayerInfoForwarding.BUNGEEGUARD) {
-      byte[] secret = server.getConfiguration().getForwardingSecret();
+      byte[] secret = server.getConfiguration().getForwardingSecret(registeredServer.getServerInfo().getName());
       handshake.setServerAddress(createBungeeGuardForwardingAddress(secret));
     } else if (proxyPlayer.getConnection().getType() == ConnectionTypes.LEGACY_FORGE) {
       handshake.setServerAddress(playerVhost + HANDSHAKE_HOSTNAME_TOKEN);

@@ -71,7 +71,7 @@ public class VelocityConfiguration implements ProxyConfig {
   private boolean preventClientProxyConnections = false;
   @Expose
   private PlayerInfoForwarding playerInfoForwardingMode = PlayerInfoForwarding.NONE;
-  private byte[] forwardingSecret = generateRandomString(12).getBytes(StandardCharsets.UTF_8);
+  private Secrets forwardingSecret;
   @Expose
   private boolean announceForge = false;
   @Expose
@@ -105,7 +105,7 @@ public class VelocityConfiguration implements ProxyConfig {
 
   private VelocityConfiguration(String bind, String motd, int showMaxPlayers, boolean onlineMode,
       boolean preventClientProxyConnections, boolean announceForge,
-      PlayerInfoForwarding playerInfoForwardingMode, byte[] forwardingSecret,
+      PlayerInfoForwarding playerInfoForwardingMode, Secrets forwardingSecret,
       boolean onlineModeKickExistingPlayers, PingPassthroughMode pingPassthrough,
       boolean samplePlayersInPing, boolean enablePlayerAddressLogging, Servers servers,
       ForcedHosts forcedHosts, Advanced advanced, Query query, Metrics metrics,
@@ -137,7 +137,7 @@ public class VelocityConfiguration implements ProxyConfig {
    */
   public boolean validate() {
     boolean valid = true;
-
+    
     if (bind.isEmpty()) {
       logger.error("'bind' option is empty.");
       valid = false;
@@ -162,7 +162,7 @@ public class VelocityConfiguration implements ProxyConfig {
         break;
       case MODERN:
       case BUNGEEGUARD:
-        if (forwardingSecret == null || forwardingSecret.length == 0) {
+        if (forwardingSecret == null) {
           logger.error("You don't have a forwarding secret set. This is required for security.");
           valid = false;
         }
@@ -301,8 +301,9 @@ public class VelocityConfiguration implements ProxyConfig {
     return playerInfoForwardingMode;
   }
 
-  public byte[] getForwardingSecret() {
-    return forwardingSecret.clone();
+  public byte[] getForwardingSecret(String serverName) {
+    return forwardingSecret.getSecrets().get(serverName).getBytes(StandardCharsets.UTF_8).clone();
+    // return forwardingSecret.clone();
   }
 
   @Override
@@ -485,27 +486,28 @@ public class VelocityConfiguration implements ProxyConfig {
 
       String forwardingSecretString = System.getenv().getOrDefault(
               "VELOCITY_FORWARDING_SECRET", "");
-      if (forwardingSecretString.isEmpty()) {
-        final String forwardSecretFile = config.get("forwarding-secret-file");
-        final Path secretPath = forwardSecretFile == null
-                ? defaultForwardingSecretPath
-                : Path.of(forwardSecretFile);
-        if (Files.exists(secretPath)) {
-          if (Files.isRegularFile(secretPath)) {
-            forwardingSecretString = String.join("", Files.readAllLines(secretPath));
-          } else {
-            throw new RuntimeException(
-                    "The file " + forwardSecretFile + " is not a valid file or it is a directory.");
-          }
-        } else {
-          throw new RuntimeException("The forwarding-secret-file does not exist.");
-        }
-      }
-      final byte[] forwardingSecret = forwardingSecretString.getBytes(StandardCharsets.UTF_8);
+      // if (forwardingSecretString.isEmpty()) {
+      //   final String forwardSecretFile = config.get("forwarding-secret-file");
+      //   final Path secretPath = forwardSecretFile == null
+      //           ? defaultForwardingSecretPath
+      //           : Path.of(forwardSecretFile);
+      //   if (Files.exists(secretPath)) {
+      //     if (Files.isRegularFile(secretPath)) {
+      //       forwardingSecretString = String.join("", Files.readAllLines(secretPath));
+      //     } else {
+      //       throw new RuntimeException(
+      //               "The file " + forwardSecretFile + " is not a valid file or it is a directory.");
+      //     }
+      //   } else {
+      //     throw new RuntimeException("The forwarding-secret-file does not exist.");
+      //   }
+      // }
+      // final byte[] forwardingSecret = forwardingSecretString.getBytes(StandardCharsets.UTF_8);
       final String motd = config.getOrElse("motd", "<#09add3>A Velocity Server");
 
       // Read the rest of the config
       final CommentedConfig serversConfig = config.get("servers");
+      final CommentedConfig secretsConfig = config.get("secrets");
       final CommentedConfig forcedHostsConfig = config.get("forced-hosts");
       final CommentedConfig advancedConfig = config.get("advanced");
       final CommentedConfig queryConfig = config.get("query");
@@ -530,11 +532,11 @@ public class VelocityConfiguration implements ProxyConfig {
 
       // Throw an exception if the forwarding-secret file is empty and the proxy is using a
       // forwarding mode that requires it.
-      if (forwardingSecret.length == 0
-              && (forwardingMode == PlayerInfoForwarding.MODERN
-              || forwardingMode == PlayerInfoForwarding.BUNGEEGUARD)) {
-        throw new RuntimeException("The forwarding-secret file must not be empty.");
-      }
+      // if (forwardingSecret.length == 0
+      //         && (forwardingMode == PlayerInfoForwarding.MODERN
+      //         || forwardingMode == PlayerInfoForwarding.BUNGEEGUARD)) {
+      //   throw new RuntimeException("The forwarding-secret file must not be empty.");
+      // }
 
       return new VelocityConfiguration(
               bind,
@@ -544,7 +546,7 @@ public class VelocityConfiguration implements ProxyConfig {
               preventClientProxyConnections,
               announceForge,
               forwardingMode,
-              forwardingSecret,
+              new Secrets(secretsConfig),
               kickExisting,
               pingPassthroughMode,
               samplePlayersInPing,
@@ -650,6 +652,53 @@ public class VelocityConfiguration implements ProxyConfig {
           + '}';
     }
   }
+
+  private static class Secrets {
+
+    private Map<String, String> secrets = ImmutableMap.of(
+        "lobby", "secret1",
+        "factions", "secret2",
+        "minigames", "secret3"
+    );
+    private List<String> attemptConnectionOrder = ImmutableList.of("lobby");
+
+    private Secrets() {
+    }
+
+    private Secrets(CommentedConfig config) {
+      if (config != null) {
+        Map<String, String> secrets = new HashMap<>();
+        for (UnmodifiableConfig.Entry entry : config.entrySet()) {
+          if (entry.getValue() instanceof String) {
+            secrets.put(entry.getKey(), entry.getValue());
+          } else {
+            if (!entry.getKey().equalsIgnoreCase("try")) {
+              throw new IllegalArgumentException(
+                  "Server entry " + entry.getKey() + " is not a string!");
+            }
+          }
+        }
+        this.secrets = ImmutableMap.copyOf(secrets);
+      }
+    }
+
+    private Map<String, String> getSecrets() {
+      return secrets;
+    }
+
+    public void setSecrets(Map<String, String> secrets) {
+      this.secrets = secrets;
+    }
+
+
+    @Override
+    public String toString() {
+      return "Secrets{"
+          + "secrets=" + secrets
+          + '}';
+    }
+  }
+
 
   private static class ForcedHosts {
 
