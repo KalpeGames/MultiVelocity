@@ -100,6 +100,7 @@ tasks {
     runShadow {
         workingDir = file("run").also(File::mkdirs)
         standardInput = System.`in`
+        jvmArgs("-Dvelocity.packet-decode-logging=true")
     }
     named<JavaExec>("run") {
         workingDir = file("run").also(File::mkdirs)
