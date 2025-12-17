@@ -516,23 +516,27 @@ public class VelocityConfiguration implements ProxyConfig {
 
       String forwardingSecretString = System.getenv().getOrDefault(
               "VELOCITY_FORWARDING_SECRET", "");
-      // if (forwardingSecretString.isEmpty()) {
-      //   final String forwardSecretFile = config.get("forwarding-secret-file");
-      //   final Path secretPath = forwardSecretFile == null
-      //           ? defaultForwardingSecretPath
-      //           : Path.of(forwardSecretFile);
-      //   if (Files.exists(secretPath)) {
-      //     if (Files.isRegularFile(secretPath)) {
-      //       forwardingSecretString = String.join("", Files.readAllLines(secretPath));
-      //     } else {
-      //       throw new RuntimeException(
-      //               "The file " + forwardSecretFile + " is not a valid file or it is a directory.");
-      //     }
-      //   } else {
-      //     throw new RuntimeException("The forwarding-secret-file does not exist.");
-      //   }
-      // }
-      // final byte[] forwardingSecret = forwardingSecretString.getBytes(StandardCharsets.UTF_8);
+      //if (forwardingSecretString.isBlank()) {
+      //  final String forwardSecretFile = config.get("forwarding-secret-file");
+      //  final Path secretPath = forwardSecretFile == null
+      //          ? defaultForwardingSecretPath
+      //          : Path.of(forwardSecretFile);
+      //  if (Files.exists(secretPath)) {
+      //    if (Files.isRegularFile(secretPath)) {
+      //      forwardingSecretString = String.join("", Files.readAllLines(secretPath));
+      //    } else {
+      //      throw new RuntimeException(
+      //              "The file " + forwardSecretFile + " is not a valid file or it is a directory.");
+      //    }
+      //  } else {
+      //    Files.createFile(secretPath);
+      //    Files.writeString(secretPath, forwardingSecretString = generateRandomString(12),
+      //        StandardCharsets.UTF_8);
+      //    logger.info("The forwarding-secret-file does not exist. A new file has been created at {}",
+      //        forwardSecretFile);
+      //  }
+      //}
+      //final byte[] forwardingSecret = forwardingSecretString.getBytes(StandardCharsets.UTF_8);
       final String motd = config.getOrElse("motd", "<#09add3>A Velocity Server");
 
       // Read the rest of the config
