@@ -38,7 +38,6 @@ import com.velocitypowered.proxy.protocol.packet.DisconnectPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
 import com.velocitypowered.proxy.protocol.packet.KeepAlivePacket;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
-import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -90,7 +89,7 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(JoinGamePacket packet) {
-    MinecraftConnection smc = serverConn.ensureConnected();
+    final MinecraftConnection smc = serverConn.ensureConnected();
     final RegisteredServer previousServer = serverConn.getPreviousServer().orElse(null);
     final ConnectedPlayer player = serverConn.getPlayer();
     final VelocityServerConnection existingConnection = player.getConnectedServer();
@@ -107,6 +106,9 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
     // Reset Tablist header and footer to prevent desync
     player.clearPlayerListHeaderAndFooter();
 
+    // Override online mode
+    packet.setOnlineMode(player.isOnlineMode());
+
     // The goods are in hand! We got JoinGame. Let's transition completely to the new state.
     smc.setAutoReading(false);
     server.getEventManager()
@@ -122,9 +124,8 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
           // Change the client to use the ClientPlaySessionHandler if required.
           ClientPlaySessionHandler playHandler;
           if (player.getConnection()
-              .getActiveSessionHandler() instanceof ClientPlaySessionHandler) {
-            playHandler =
-                (ClientPlaySessionHandler) player.getConnection().getActiveSessionHandler();
+              .getActiveSessionHandler() instanceof ClientPlaySessionHandler sessionHandler) {
+            playHandler = sessionHandler;
           } else {
             playHandler = new ClientPlaySessionHandler(server, player);
             player.getConnection().setActiveSessionHandler(StateRegistry.PLAY, playHandler);
@@ -214,7 +215,7 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public void disconnected() {
-    resultFuture
-        .completeExceptionally(new IOException("Unexpectedly disconnected from remote server"));
+    resultFuture.complete(ConnectionRequestResults.forDisconnect(
+        ConnectionMessages.INTERNAL_SERVER_CONNECTION_ERROR, serverConn.getServer()));
   }
 }

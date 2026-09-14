@@ -22,8 +22,8 @@ import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
 import java.util.Objects;
-
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class ClientSettingsPacket implements MinecraftPacket {
@@ -135,7 +135,7 @@ public class ClientSettingsPacket implements MinecraftPacket {
     return "ClientSettings{" + "locale='" + locale + '\'' + ", viewDistance=" + viewDistance +
         ", chatVisibility=" + chatVisibility + ", chatColors=" + chatColors + ", skinParts=" +
         skinParts + ", mainHand=" + mainHand + ", chatFilteringEnabled=" + textFilteringEnabled +
-        ", clientListingAllowed=" + clientListingAllowed +  ", particleStatus=" + particleStatus + '}';
+        ", clientListingAllowed=" + clientListingAllowed + ", particleStatus=" + particleStatus + '}';
   }
 
   @Override
@@ -207,6 +207,43 @@ public class ClientSettingsPacket implements MinecraftPacket {
   }
 
   @Override
+  public int decodeExpectedMaxLength(ByteBuf buf, ProtocolUtils.Direction direction, ProtocolVersion version) {
+    return 1 + ByteBufUtil.utf8MaxBytes(16) + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
+  }
+
+  @Override
+  public int decodeExpectedMinLength(ByteBuf buf, ProtocolUtils.Direction direction, ProtocolVersion version) {
+    int minLength = 1 // locale
+            + 1       // viewDistance
+            + 1       // chatVisibility
+            + 1;      // chatColors
+
+    if (version.noGreaterThan(ProtocolVersion.MINECRAFT_1_7_6)) {
+      minLength += 1; // difficulty
+    }
+
+    minLength += 1; // skinParts
+
+    if (version.noLessThan(ProtocolVersion.MINECRAFT_1_9)) {
+      minLength += 1; // mainHand
+
+      if (version.noLessThan(ProtocolVersion.MINECRAFT_1_17)) {
+        minLength += 1; // textFilteringEnabled
+
+        if (version.noLessThan(ProtocolVersion.MINECRAFT_1_18)) {
+          minLength += 1; // clientListingAllowed
+
+          if (version.noLessThan(ProtocolVersion.MINECRAFT_1_21_2)) {
+            minLength += 1; // particleStatus
+          }
+        }
+      }
+    }
+
+    return minLength;
+  }
+
+  @Override
   public boolean equals(@Nullable final Object o) {
     if (this == o) {
       return true;
@@ -237,7 +274,7 @@ public class ClientSettingsPacket implements MinecraftPacket {
         difficulty,
         skinParts,
         mainHand,
-            textFilteringEnabled,
+        textFilteringEnabled,
         clientListingAllowed,
         particleStatus);
   }

@@ -32,7 +32,7 @@ public class JoinGamePacket implements MinecraftPacket {
 
   private static final BinaryTagIO.Reader JOINGAME_READER = BinaryTagIO.reader(4 * 1024 * 1024);
   private int entityId;
-  private short gamemode;
+  private int gamemode;
   private int dimension;
   private long partialHashedSeed; // 1.15+
   private short difficulty;
@@ -47,11 +47,12 @@ public class JoinGamePacket implements MinecraftPacket {
   private CompoundBinaryTag registry; // 1.16+
   private DimensionInfo dimensionInfo; // 1.16+
   private CompoundBinaryTag currentDimensionData; // 1.16.2+
-  private short previousGamemode; // 1.16+
+  private int previousGamemode; // 1.16+
   private int simulationDistance; // 1.18+
   private @Nullable Pair<String, Long> lastDeathPosition; // 1.19+
   private int portalCooldown; // 1.20+
   private int seaLevel; // 1.21.2+
+  private boolean onlineMode; // 26.2+
   private boolean enforcesSecureChat; // 1.20.5+
 
   public int getEntityId() {
@@ -62,11 +63,11 @@ public class JoinGamePacket implements MinecraftPacket {
     this.entityId = entityId;
   }
 
-  public short getGamemode() {
+  public int getGamemode() {
     return gamemode;
   }
 
-  public void setGamemode(short gamemode) {
+  public void setGamemode(int gamemode) {
     this.gamemode = gamemode;
   }
 
@@ -130,11 +131,11 @@ public class JoinGamePacket implements MinecraftPacket {
     this.dimensionInfo = dimensionInfo;
   }
 
-  public short getPreviousGamemode() {
+  public int getPreviousGamemode() {
     return previousGamemode;
   }
 
-  public void setPreviousGamemode(short previousGamemode) {
+  public void setPreviousGamemode(int previousGamemode) {
     this.previousGamemode = previousGamemode;
   }
 
@@ -190,6 +191,10 @@ public class JoinGamePacket implements MinecraftPacket {
     this.seaLevel = seaLevel;
   }
 
+  public void setOnlineMode(boolean onlineMode) {
+    this.onlineMode = onlineMode;
+  }
+
   public boolean getEnforcesSecureChat() {
     return this.enforcesSecureChat;
   }
@@ -213,7 +218,7 @@ public class JoinGamePacket implements MinecraftPacket {
         dimensionInfo + '\'' + ", currentDimensionData='" + currentDimensionData + '\'' +
         ", previousGamemode=" + previousGamemode + ", simulationDistance=" + simulationDistance +
         ", lastDeathPosition='" + lastDeathPosition + '\'' + ", portalCooldown=" + portalCooldown +
-        ", seaLevel=" + seaLevel +
+        ", seaLevel=" + seaLevel + ", onlineMode=" + this.onlineMode +
         '}';
   }
 
@@ -340,8 +345,13 @@ public class JoinGamePacket implements MinecraftPacket {
     String levelName = ProtocolUtils.readString(buf);
     this.partialHashedSeed = buf.readLong();
 
-    this.gamemode = buf.readByte();
-    this.previousGamemode = buf.readByte();
+    if (version.noLessThan(ProtocolVersion.MINECRAFT_26_3)) {
+      this.gamemode = ProtocolUtils.readVarInt(buf);
+      this.previousGamemode = ProtocolUtils.readVarInt(buf); // game mode + 1 or 0
+    } else {
+      this.gamemode = buf.readByte();
+      this.previousGamemode = buf.readByte(); // game mode or -1
+    }
 
     boolean isDebug = buf.readBoolean();
     boolean isFlat = buf.readBoolean();
@@ -356,6 +366,10 @@ public class JoinGamePacket implements MinecraftPacket {
 
     if (version.noLessThan(ProtocolVersion.MINECRAFT_1_21_2)) {
       this.seaLevel = ProtocolUtils.readVarInt(buf);
+    }
+
+    if (version.noLessThan(ProtocolVersion.MINECRAFT_26_2)) {
+      this.onlineMode = buf.readBoolean();
     }
 
     if (version.noLessThan(ProtocolVersion.MINECRAFT_1_20_5)) {
@@ -489,8 +503,13 @@ public class JoinGamePacket implements MinecraftPacket {
     ProtocolUtils.writeString(buf, dimensionInfo.getLevelName());
     buf.writeLong(partialHashedSeed);
 
-    buf.writeByte(gamemode);
-    buf.writeByte(previousGamemode);
+    if (version.noLessThan(ProtocolVersion.MINECRAFT_26_3)) {
+      ProtocolUtils.writeVarInt(buf, this.gamemode);
+      ProtocolUtils.writeVarInt(buf, this.previousGamemode);
+    } else {
+      buf.writeByte(this.gamemode);
+      buf.writeByte(this.previousGamemode);
+    }
 
     buf.writeBoolean(dimensionInfo.isDebugType());
     buf.writeBoolean(dimensionInfo.isFlat());
@@ -508,6 +527,10 @@ public class JoinGamePacket implements MinecraftPacket {
 
     if (version.noLessThan(ProtocolVersion.MINECRAFT_1_21_2)) {
       ProtocolUtils.writeVarInt(buf, seaLevel);
+    }
+
+    if (version.noLessThan(ProtocolVersion.MINECRAFT_26_2)) {
+      buf.writeBoolean(this.onlineMode);
     }
 
     if (version.noLessThan(ProtocolVersion.MINECRAFT_1_20_5)) {

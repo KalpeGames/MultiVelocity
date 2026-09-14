@@ -82,7 +82,6 @@ import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
-import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -105,8 +104,8 @@ import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.audience.ForwardingAudience;
 import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.translation.MiniMessageTranslationStore;
 import net.kyori.adventure.translation.GlobalTranslator;
-import net.kyori.adventure.translation.TranslationStore;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.bstats.MetricsBase;
@@ -166,6 +165,8 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
   private final Map<UUID, ConnectedPlayer> connectionsByUuid = new ConcurrentHashMap<>();
   private final Map<String, ConnectedPlayer> connectionsByName = new ConcurrentHashMap<>();
+  private final Object sessionIdLock = new Object();
+  private volatile @Nullable UUID sessionId;
   private final VelocityConsole console;
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
@@ -220,7 +221,8 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     PluginDescription description = new VelocityPluginDescription(
         "velocity", version.getName(), version.getVersion(), "The Velocity proxy",
             version.getName().equals("Velocity") ? VELOCITY_URL : null,
-            ImmutableList.of(version.getVendor()), Collections.emptyList(), null);
+            ImmutableList.of(version.getVendor()), Collections.emptyList(),
+            Collections.emptyList(), null);
     VelocityPluginContainer container = new VelocityPluginContainer(description);
     container.setInstance(VelocityVirtualPlugin.INSTANCE);
     return container;
@@ -241,8 +243,6 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     logger.info("Booting up {} {}...", getVersion().getName(), getVersion().getVersion());
     console.setupStreams();
     pluginManager.registerPlugin(this.createVirtualPlugin());
-
-    registerTranslations();
 
     // Yes, you're reading that correctly. We're generating a 1024-bit RSA keypair. Sounds
     // dangerous, right? We're well within the realm of factoring such a key...
@@ -291,6 +291,8 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     new SendCommand(this).register();
 
     this.doStartupConfigLoad();
+
+    registerTranslations();
 
     for (ServerInfo cliServer : options.getServers()) {
       servers.register(cliServer);
@@ -342,8 +344,8 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   }
 
   private void registerTranslations() {
-    final TranslationStore.StringBased<MessageFormat> translationRegistry =
-            TranslationStore.messageFormat(Key.key("velocity", "translations"));
+    final MiniMessageTranslationStore translationRegistry =
+            MiniMessageTranslationStore.create(Key.key("velocity", "translations"));
     translationRegistry.defaultLocale(Locale.US);
     try {
       ResourceUtils.visitResources(VelocityServer.class, path -> {
@@ -486,23 +488,46 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
       return false;
     }
 
-    // Re-register servers. If a server is being replaced, make sure to note what players need to
-    // move back to a fallback server.
+    // Re-register servers. If a server is being replaced or removed, make sure to note what
+    // players need to move back to a fallback server.
     Collection<ConnectedPlayer> evacuate = new ArrayList<>();
+    for (Map.Entry<String, String> entry : configuration.getServers().entrySet()) {
+      if (newConfiguration.getServers().keySet().stream()
+          .anyMatch(name -> name.equalsIgnoreCase(entry.getKey()))) {
+        continue;
+      }
+
+      RegisteredServer rs = servers.getServer(entry.getKey()).orElse(null);
+      if (rs == null) {
+        continue;
+      }
+
+      for (Player player : rs.getPlayersConnected()) {
+        if (!(player instanceof ConnectedPlayer)) {
+          throw new IllegalStateException("Expected ConnectedPlayer for player " + player
+              + " on server " + rs.getServerInfo().getName() + ", got "
+              + player.getClass().getName());
+        }
+        evacuate.add((ConnectedPlayer) player);
+      }
+      servers.unregister(rs.getServerInfo());
+    }
+
     for (Map.Entry<String, String> entry : newConfiguration.getServers().entrySet()) {
       ServerInfo newInfo = new ServerInfo(entry.getKey(), AddressUtil.parseAddress(entry.getValue()));
-      Optional<RegisteredServer> rs = servers.getServer(entry.getKey());
-      if (rs.isEmpty()) {
+      RegisteredServer rs = servers.getServer(entry.getKey()).orElse(null);
+      if (rs == null) {
         servers.register(newInfo);
-      } else if (!rs.get().getServerInfo().equals(newInfo)) {
-        for (Player player : rs.get().getPlayersConnected()) {
+      } else if (!rs.getServerInfo().equals(newInfo)) {
+        for (Player player : rs.getPlayersConnected()) {
           if (!(player instanceof ConnectedPlayer)) {
-            throw new IllegalStateException("ConnectedPlayer not found for player " + player
-                + " in server " + rs.get().getServerInfo().getName());
+            throw new IllegalStateException("Expected ConnectedPlayer for player " + player
+                + " on server " + rs.getServerInfo().getName() + ", got "
+                + player.getClass().getName());
           }
           evacuate.add((ConnectedPlayer) player);
         }
-        servers.unregister(rs.get().getServerInfo());
+        servers.unregister(rs.getServerInfo());
         servers.register(newInfo);
       }
     }
@@ -651,7 +676,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   }
 
   /**
-   * Calls {@link #shutdown(boolean, Component)} with the default reason "Proxy shutting down."
+   * Calls {@link #shutdown(boolean, Component)} with the default reason "Proxy shutting down".
    *
    * @param explicitExit whether the user explicitly shut down the proxy
    */
@@ -744,6 +769,36 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     connectionsByName.remove(connection.getUsername().toLowerCase(Locale.US), connection);
     connectionsByUuid.remove(connection.getUniqueId(), connection);
     connection.disconnected();
+
+    if (this.sessionId != null && connectionsByUuid.isEmpty()) {
+      synchronized (this.sessionIdLock) {
+        if (connectionsByUuid.isEmpty()) {
+          this.sessionId = null;
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns the metrics session ID for this proxy, generating one if none is currently active. The
+   * ID is shared by every player connected during a populated period and is regenerated once the
+   * proxy empties.
+   *
+   * @return the current session ID
+   */
+  public UUID getSessionId() {
+    UUID uuid = this.sessionId;
+    if (uuid != null) {
+      return uuid;
+    }
+    synchronized (this.sessionIdLock) {
+      uuid = this.sessionId;
+      if (uuid == null) {
+        uuid = UUID.randomUUID();
+        this.sessionId = uuid;
+      }
+      return uuid;
+    }
   }
 
   @Override
@@ -835,7 +890,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   public VelocityChannelRegistrar getChannelRegistrar() {
     return channelRegistrar;
   }
-  
+
   @Override
   public boolean isShuttingDown() {
     return shutdownInProgress.get();

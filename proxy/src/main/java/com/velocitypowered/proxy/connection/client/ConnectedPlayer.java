@@ -84,7 +84,6 @@ import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.protocol.packet.RemoveResourcePackPacket;
 import com.velocitypowered.proxy.protocol.packet.TransferPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.ChatQueue;
-import com.velocitypowered.proxy.protocol.packet.chat.ChatType;
 import com.velocitypowered.proxy.protocol.packet.chat.ComponentHolder;
 import com.velocitypowered.proxy.protocol.packet.chat.PlayerChatCompletionPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.builder.ChatBuilderFactory;
@@ -111,6 +110,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -118,13 +118,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import net.kyori.adventure.audience.MessageType;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.identity.Identity;
 import net.kyori.adventure.key.Key;
 import net.kyori.adventure.permission.PermissionChecker;
-import net.kyori.adventure.platform.facet.FacetPointers;
-import net.kyori.adventure.platform.facet.FacetPointers.Type;
 import net.kyori.adventure.pointer.Pointers;
 import net.kyori.adventure.pointer.PointersSupplier;
 import net.kyori.adventure.resource.ResourcePackInfoLike;
@@ -135,8 +132,10 @@ import net.kyori.adventure.sound.SoundStop;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
+import net.kyori.adventure.text.minimessage.translation.Argument;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.kyori.adventure.title.Title;
 import net.kyori.adventure.title.Title.Times;
 import net.kyori.adventure.title.TitlePart;
 import net.kyori.adventure.translation.GlobalTranslator;
@@ -165,7 +164,6 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
                   .resolving(Identity.DISPLAY_NAME, player -> Component.text(player.getUsername()))
                   .resolving(Identity.LOCALE, Player::getEffectiveLocale)
                   .resolving(PermissionChecker.POINTER, Player::getPermissionChecker)
-                  .resolving(FacetPointers.TYPE, player -> Type.PLAYER)
                   .build();
 
   /**
@@ -423,29 +421,16 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   }
 
   @Override
-  public void sendMessage(@NonNull Identity identity, @NonNull Component message) {
+  public void sendMessage(final @NonNull Component message) {
+    Preconditions.checkNotNull(message, "message");
     final Component translated = translateMessage(message);
 
     connection.write(getChatBuilderFactory().builder()
-        .component(translated).forIdentity(identity).toClient());
+        .component(translated).toClient());
   }
 
   @Override
-  public void sendMessage(@NonNull Identity identity, @NonNull Component message,
-                          @NonNull MessageType type) {
-    Preconditions.checkNotNull(message, "message");
-    Preconditions.checkNotNull(type, "type");
-
-    Component translated = translateMessage(message);
-
-    connection.write(getChatBuilderFactory().builder()
-        .component(translated).forIdentity(identity)
-        .setType(type == MessageType.CHAT ? ChatType.CHAT : ChatType.SYSTEM)
-        .toClient());
-  }
-
-  @Override
-  public void sendActionBar(net.kyori.adventure.text.@NonNull Component message) {
+  public void sendActionBar(@NonNull Component message) {
     Component translated = translateMessage(message);
 
     ProtocolVersion playerVersion = getProtocolVersion();
@@ -502,11 +487,11 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   }
 
   @Override
-  public void showTitle(net.kyori.adventure.title.@NonNull Title title) {
+  public void showTitle(@NonNull Title title) {
     if (this.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_8)) {
       GenericTitlePacket timesPkt = GenericTitlePacket.constructTitlePacket(
           GenericTitlePacket.ActionType.SET_TIMES, this.getProtocolVersion());
-      net.kyori.adventure.title.Title.Times times = title.times();
+      Title.Times times = title.times();
       if (times != null) {
         timesPkt.setFadeIn((int) DurationUtils.toTicks(times.fadeIn()));
         timesPkt.setStay((int) DurationUtils.toTicks(times.stay()));
@@ -644,7 +629,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   }
 
   @Override
-  public void disconnect(Component reason) {
+  public void disconnect(@NotNull Component reason) {
+    Objects.requireNonNull(reason, "reason");
     if (connection.eventLoop().inEventLoop()) {
       disconnect0(reason, false);
     } else {
@@ -713,12 +699,12 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     Component friendlyError;
     if (connectedServer != null && connectedServer.getServerInfo().equals(server.getServerInfo())) {
       friendlyError = Component.translatable("velocity.error.connected-server-error",
-          Component.text(server.getServerInfo().getName()));
+              Argument.string("server", server.getServerInfo().getName()));
     } else {
       logger.error("{}: unable to connect to server {}", this, server.getServerInfo().getName(),
           wrapped);
       friendlyError = Component.translatable("velocity.error.connecting-server-error",
-          Component.text(server.getServerInfo().getName()));
+              Argument.string("server", server.getServerInfo().getName()));
     }
     handleConnectionException(server, null, friendlyError.color(NamedTextColor.RED), safe);
   }
@@ -746,7 +732,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       }
       handleConnectionException(server, disconnectReason,
           Component.translatable("velocity.error.moved-to-new-server", NamedTextColor.RED,
-              Component.text(server.getServerInfo().getName()),
+              Argument.string("server", server.getServerInfo().getName()),
               disconnectReason), safe);
     } else {
       if (this.server.getConfiguration().isLogPlayerConnections()) {
@@ -755,7 +741,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       }
       handleConnectionException(server, disconnectReason,
           Component.translatable("velocity.error.cant-connect", NamedTextColor.RED,
-              Component.text(server.getServerInfo().getName()),
+              Argument.string("server", server.getServerInfo().getName()),
               disconnectReason), safe);
     }
   }
@@ -811,61 +797,56 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
         return;
       }
 
-      if (event.getResult() instanceof final DisconnectPlayer res) {
-        disconnect(res.getReasonComponent());
-      } else if (event.getResult() instanceof final RedirectPlayer res) {
-        createConnectionRequest(res.getServer(), previousConnection).connect()
-            .whenCompleteAsync((status, throwable) -> {
-              if (throwable != null) {
-                handleConnectionException(res.getServer(), throwable, true);
-                return;
-              }
+      switch (event.getResult()) {
+        case DisconnectPlayer res -> disconnect(res.getReasonComponent());
+        case RedirectPlayer res -> createConnectionRequest(res.getServer(), previousConnection).connect()
+                .whenCompleteAsync((status, throwable) -> {
+                  if (throwable != null) {
+                    handleConnectionException(res.getServer(), throwable, true);
+                    return;
+                  }
 
-              switch (status.getStatus()) {
-                // Impossible/nonsensical cases
-                case ALREADY_CONNECTED:
-                  logger.error("{}: already connected to {}", this,
-                      status.getAttemptedConnection().getServerInfo().getName());
-                  break;
-                case CONNECTION_IN_PROGRESS:
-                  // Fatal case
-                case CONNECTION_CANCELLED:
-                  Component fallbackMsg = res.getMessageComponent();
-                  if (fallbackMsg == null) {
-                    fallbackMsg = friendlyReason;
+                  switch (status.getStatus()) {
+                    // Impossible/nonsensical cases
+                    case ALREADY_CONNECTED -> logger.error("{}: already connected to {}", this,
+                            status.getAttemptedConnection().getServerInfo().getName());
+                    case CONNECTION_IN_PROGRESS, CONNECTION_CANCELLED -> {
+                      Component fallbackMsg = res.getMessageComponent();
+                      if (fallbackMsg == null) {
+                        fallbackMsg = friendlyReason;
+                      }
+                      disconnect(status.getReasonComponent().orElse(fallbackMsg));
+                    }
+                    case SERVER_DISCONNECTED -> {
+                      Component reason = status.getReasonComponent()
+                            .orElse(ConnectionMessages.INTERNAL_SERVER_CONNECTION_ERROR);
+                      handleConnectionException(res.getServer(),
+                            DisconnectPacket.create(reason, getProtocolVersion(), connection.getState()),
+                            ((Impl) status).isSafe());
+                    }
+                    case SUCCESS -> {
+                      Component requestedMessage = res.getMessageComponent();
+                      if (requestedMessage == null) {
+                        requestedMessage = friendlyReason;
+                      }
+                      if (requestedMessage != Component.empty()) {
+                        sendMessage(requestedMessage);
+                      }
+                    }
+                    default -> {
+                      // The only remaining value is successful (no need to do anything!)
+                    }
                   }
-                  disconnect(status.getReasonComponent().orElse(fallbackMsg));
-                  break;
-                case SERVER_DISCONNECTED:
-                  Component reason = status.getReasonComponent()
-                      .orElse(ConnectionMessages.INTERNAL_SERVER_CONNECTION_ERROR);
-                  handleConnectionException(res.getServer(),
-                      DisconnectPacket.create(reason, getProtocolVersion(), connection.getState()),
-                      ((Impl) status).isSafe());
-                  break;
-                case SUCCESS:
-                  Component requestedMessage = res.getMessageComponent();
-                  if (requestedMessage == null) {
-                    requestedMessage = friendlyReason;
-                  }
-                  if (requestedMessage != Component.empty()) {
-                    sendMessage(requestedMessage);
-                  }
-                  break;
-                default:
-                  // The only remaining value is successful (no need to do anything!)
-                  break;
-              }
-            }, connection.eventLoop());
-      } else if (event.getResult() instanceof final Notify res) {
-        if (event.kickedDuringServerConnect() && previousConnection != null) {
-          sendMessage(res.getMessageComponent());
-        } else {
-          disconnect(res.getMessageComponent());
+                }, connection.eventLoop());
+        case Notify res -> {
+          if (event.kickedDuringServerConnect() && previousConnection != null) {
+            sendMessage(res.getMessageComponent());
+          } else {
+            disconnect(res.getMessageComponent());
+          }
         }
-      } else {
         // In case someone gets creative, assume we want to disconnect the player.
-        disconnect(friendlyReason);
+        default -> disconnect(friendlyReason);
       }
     }, connection.eventLoop());
   }
@@ -1353,11 +1334,17 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       final Long sentTime = serverConnection.getPendingPings().remove(packet.getRandomId());
       if (sentTime != null) {
         final MinecraftConnection smc = serverConnection.getConnection();
-        if (smc != null) {
+        final StateRegistry clientState = connection.getState();
+        final boolean stateAllowsForward = smc != null
+            && !smc.isClosed()
+            && clientState == smc.getState()
+            && (clientState == StateRegistry.CONFIG || clientState == StateRegistry.PLAY);
+        if (stateAllowsForward) {
           setPing(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sentTime));
           smc.write(packet);
-          return true;
         }
+        // We removed this, and so this is ours
+        return true;
       }
     }
     return false;
@@ -1367,7 +1354,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
    * Switches the connection to the client into config state.
    */
   public void switchToConfigState() {
-    server.getEventManager().fire(new PlayerEnterConfigurationEvent(this, getConnectionInFlightOrConnectedServer()))
+    final VelocityServerConnection targetServer = getConnectionInFlightOrConnectedServer();
+    server.getEventManager().fire(new PlayerEnterConfigurationEvent(this, targetServer))
         .completeOnTimeout(null, 5, TimeUnit.SECONDS).thenRunAsync(() -> {
           // if the connection was closed earlier, there is a risk that the player is no longer connected
           if (!connection.getChannel().isActive()) {
@@ -1382,7 +1370,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
           connection.pendingConfigurationSwitch = true;
           connection.getChannel().pipeline().get(MinecraftEncoder.class).setState(StateRegistry.CONFIG);
           // Make sure we don't send any play packets to the player after update start
-          connection.addPlayPacketQueueHandler();
+          connection.addPlayPacketQueueOutboundHandler();
         }, connection.eventLoop()).exceptionally((ex) -> {
           logger.error("Error switching player connection to config state", ex);
           return null;
